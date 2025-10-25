@@ -1,0 +1,30 @@
+CompileFlags:
+  Add: [
+    -xc,
+    -std=c11,
+    -target,
+    bpf,
+    -D__TARGET_ARCH_x86,
+    -m64,
+    -I/root/zafxdp/src/ebpf,
+    -I/usr/include/bpf,
+  ]
+Diagnostics:
+  ClangTidy:
+    Add: []
+    Remove: [readability-identifier-naming]
+  UnusedIncludes: None
+Index:
+  Background: Build
+---
+If:
+  PathMatch: .*\.c
+CompileFlags:
+  Add: [-xc, -std=c11]
+---
+InlayHints:
+  Enabled: No
+Hover:
+  ShowAKA: No
+Completion:
+  AllScopes: No

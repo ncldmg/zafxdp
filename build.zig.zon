@@ -1,0 +1,21 @@
+.{
+    .name = .zafxdp,
+
+    .version = "0.0.0",
+
+    .fingerprint = 0xaa129f51c21e6f7b,
+
+    .minimum_zig_version = "0.14.0",
+
+    .dependencies = .{
+        // .zbpf = .{
+        //     .url = "git+https://github.com/tw4452852/zbpf#da3456352a8ea62d7b579175c9118290f0ee4609",
+        //     .hash = "zbpf-0.3.0-R43K5LS4BADhmpi-x0MCskJRaGHu_blRfJ6Z3JVqSPJ1",
+        // },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
