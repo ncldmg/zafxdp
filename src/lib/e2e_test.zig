@@ -192,8 +192,8 @@ fn forwardFrames(
         // Copy frame data from input to output UMEM
         const out_addr = i * output.Options.FrameSize;
         if (out_addr + rx_desc.len <= output.Umem.len and
-            rx_desc.addr + rx_desc.len <= input.Umem.len) {
-
+            rx_desc.addr + rx_desc.len <= input.Umem.len)
+        {
             const in_frame = input.Umem[rx_desc.addr..][0..rx_desc.len];
             const out_frame = output.Umem[out_addr..][0..rx_desc.len];
             @memcpy(out_frame, in_frame);
@@ -257,8 +257,7 @@ test "L2 forwarder - frame forwarding function" {
     const dst_mac = [6]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
     const result = try forwardFrames(in_xsk, out_xsk, dst_mac);
 
-    std.debug.print("✓ Forwarding function test completed ({} bytes, {} frames)\n",
-                    .{result.bytes, result.frames});
+    std.debug.print("✓ Forwarding function test completed ({} bytes, {} frames)\n", .{ result.bytes, result.frames });
 }
 
 test "BPF map operations" {
@@ -273,13 +272,7 @@ test "BPF map operations" {
     defer ebpf_loader.deinit();
 
     // Create an array map
-    const map_fd = ebpf_loader.createMap(
-        linux.BPF.MapType.array,
-        @sizeOf(u32),
-        @sizeOf(u32),
-        16,
-        "test_map"
-    ) catch |err| {
+    const map_fd = ebpf_loader.createMap(linux.BPF.MapType.array, @sizeOf(u32), @sizeOf(u32), 16, "test_map") catch |err| {
         std.debug.print("Failed to create map: {}\n", .{err});
         return error.SkipZigTest;
     };
