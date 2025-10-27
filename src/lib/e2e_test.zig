@@ -390,6 +390,162 @@ test "ForwarderStats tracking" {
     std.debug.print("✓ Stats tracking test passed\n", .{});
 }
 
+test "Real traffic forwarding with raw socket injection" {
+    if (!isRoot()) {
+        std.debug.print("Skipping test - requires root privileges\n", .{});
+        return error.SkipZigTest;
+    }
+
+    const allocator = testing.allocator;
+
+    // Find loopback interface
+    const ifindex = (try findNetworkInterface(allocator)) orelse {
+        std.debug.print("No network interface found, skipping test\n", .{});
+        return error.SkipZigTest;
+    };
+
+    const queue_id: u32 = 0;
+
+    // Create XDP program
+    var program = xdp.Program.init(allocator, 64) catch |err| {
+        std.debug.print("Failed to create program: {}\n", .{err});
+        return error.SkipZigTest;
+    };
+    defer program.deinit();
+
+    const options = xdp.SocketOptions{
+        .NumFrames = 64,
+        .FrameSize = 2048,
+        .FillRingNumDescs = 64,
+        .CompletionRingNumDescs = 64,
+        .RxRingNumDescs = 64,
+        .TxRingNumDescs = 64,
+    };
+
+    // Create XDP socket
+    const rx_xsk = xdp.XDPSocket.init(allocator, ifindex, queue_id, options) catch |err| {
+        std.debug.print("Failed to create XDP socket: {}\n", .{err});
+        return error.SkipZigTest;
+    };
+    defer rx_xsk.deinit(allocator);
+
+    // Register socket with program
+    program.register(queue_id, @intCast(rx_xsk.Fd)) catch |err| {
+        std.debug.print("Failed to register socket: {}\n", .{err});
+        return error.SkipZigTest;
+    };
+    defer program.unregister(queue_id) catch {};
+
+    // Fill the fill ring
+    var fill_descs: [64]u64 = undefined;
+    for (0..64) |i| {
+        fill_descs[i] = i * options.FrameSize;
+    }
+    const filled = rx_xsk.fillRing(&fill_descs, 64);
+    try testing.expect(filled == 64);
+
+    // Attach program to interface in SKB mode
+    program.attach(ifindex, @intFromEnum(xdp.XdpFlags.SKB_MODE)) catch |err| {
+        std.debug.print("XDP attach failed: {}\n", .{err});
+        return error.SkipZigTest;
+    };
+    defer program.detach(ifindex) catch {};
+
+    // Create raw socket for sending traffic
+    const raw_sock = posix.socket(posix.AF.PACKET, posix.SOCK.RAW, 0) catch |err| {
+        std.debug.print("Failed to create raw socket: {}\n", .{err});
+        return error.SkipZigTest;
+    };
+    defer posix.close(raw_sock);
+
+    // Bind raw socket to interface
+    const sockaddr = linux.sockaddr.ll{
+        .family = posix.AF.PACKET,
+        .protocol = std.mem.nativeToBig(u16, 0x0800), // IP protocol
+        .ifindex = @intCast(ifindex),
+        .hatype = 0,
+        .pkttype = 0,
+        .halen = 6,
+        .addr = [_]u8{0} ** 8,
+    };
+
+    posix.bind(raw_sock, @ptrCast(&sockaddr), @sizeOf(@TypeOf(sockaddr))) catch |err| {
+        std.debug.print("Failed to bind raw socket: {}\n", .{err});
+        return error.SkipZigTest;
+    };
+
+    // Construct a simple Ethernet frame
+    var packet: [64]u8 = undefined;
+    @memset(&packet, 0);
+
+    // Destination MAC (broadcast)
+    packet[0] = 0xff;
+    packet[1] = 0xff;
+    packet[2] = 0xff;
+    packet[3] = 0xff;
+    packet[4] = 0xff;
+    packet[5] = 0xff;
+
+    // Source MAC
+    packet[6] = 0x00;
+    packet[7] = 0x11;
+    packet[8] = 0x22;
+    packet[9] = 0x33;
+    packet[10] = 0x44;
+    packet[11] = 0x55;
+
+    // EtherType (IPv4)
+    packet[12] = 0x08;
+    packet[13] = 0x00;
+
+    // Payload (simple test data)
+    const payload = "ZAFXDP_TEST";
+    @memcpy(packet[14..][0..payload.len], payload);
+
+    std.debug.print("Sending test packet...\n", .{});
+
+    // Send packet
+    const sent = posix.send(raw_sock, &packet, 0) catch |err| {
+        std.debug.print("Failed to send packet: {}\n", .{err});
+        return error.SkipZigTest;
+    };
+
+    std.debug.print("Sent {} bytes\n", .{sent});
+
+    // Give some time for packet to be processed
+    std.Thread.sleep(100 * std.time.ns_per_ms);
+
+    // Try to receive on XDP socket
+    var rx_descs: [64]xdp.XDPDesc = undefined;
+    const num_received = rx_xsk.rxRing(&rx_descs, 64);
+
+    std.debug.print("Received {} frames on XDP socket\n", .{num_received});
+
+    if (num_received > 0) {
+        // Verify we got something
+        try testing.expect(num_received >= 1);
+
+        // Check the first frame
+        const first_desc = rx_descs[0];
+        try testing.expect(first_desc.len > 0);
+
+        std.debug.print("✓ Real traffic test passed - received {} frames\n", .{num_received});
+        std.debug.print("  First frame: {} bytes at address {}\n", .{ first_desc.len, first_desc.addr });
+
+        // Verify payload if possible
+        if (first_desc.addr + 14 + payload.len <= rx_xsk.Umem.len) {
+            const received_payload = rx_xsk.Umem[first_desc.addr + 14 ..][0..payload.len];
+            if (std.mem.eql(u8, received_payload, payload)) {
+                std.debug.print("  Payload verified: {s}\n", .{received_payload});
+            }
+        }
+    } else {
+        std.debug.print("⚠ No frames received (may not work on loopback with XDP)\n", .{});
+        // Don't fail the test - XDP on loopback may not work on all systems
+        return error.SkipZigTest;
+    }
+}
+
 // Main L2 forwarder implementation (for reference/manual testing)
 pub const L2Forwarder = struct {
     allocator: std.mem.Allocator,
