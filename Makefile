@@ -1,5 +1,5 @@
 test-e2e:
-	sudo zig build test-e2e
+	sudo zig build test-e2e --summary failures
 
 test-unit:
 	sudo zig build test
