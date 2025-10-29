@@ -404,6 +404,7 @@ pub const Program = struct {
 //    return XDP_PASS;
 // }
 
+// TODO: use zbpf lib
 fn buildXdpProgram(allocator: mem.Allocator, qidconf_fd: i32, xsks_fd: i32) LoaderError![]BPF.Insn {
     var insns: ArrayList(BPF.Insn) = .{};
     errdefer insns.deinit(allocator);
@@ -464,21 +465,222 @@ fn buildXdpProgram(allocator: mem.Allocator, qidconf_fd: i32, xsks_fd: i32) Load
     return try insns.toOwnedSlice(allocator);
 }
 
-// XDP program attachment - currently requires manual attachment via ip command
-// TODO: Implement proper netlink-based attachment when BPF_LINK_CREATE supports XDP with ifindex
-fn attachProgram(ifindex: u32, prog_fd: i32, flags: u32) LoaderError!void {
-    _ = flags;
-    std.debug.print("XDP program loaded (fd={}). To attach manually:\n", .{prog_fd});
-    std.debug.print("sudo ip link set dev <interface> xdpgeneric fd {} sec xdp\n", .{prog_fd});
-    std.debug.print("(Use ifindex {} to find your interface with 'ip link show')\n", .{ifindex});
+// TODO: implement netlink lib
+// XDP-specific netlink attributes (from linux/if_link.h)
+const IFLA_XDP = enum(c_ushort) {
+    UNSPEC = 0,
+    FD = 1,
+    ATTACHED = 2,
+    FLAGS = 3,
+    PROG_ID = 4,
+    DRV_PROG_ID = 5,
+    SKB_PROG_ID = 6,
+    HW_PROG_ID = 7,
+    EXPECTED_FD = 8,
 
-    // Note: BPF_LINK_CREATE in newer kernels uses target_fd, not target_ifindex
-    // For XDP attachment, we need to use netlink or the ip command
-    return LoaderError.AttachFailed;
+    _,
+};
+
+// Helper function to align netlink attribute length
+fn nlmsgAlign(len: usize) usize {
+    return (len + 3) & ~@as(usize, 3);
+}
+
+fn rtaAlign(len: usize) usize {
+    return (len + linux.rtattr.ALIGNTO - 1) & ~@as(usize, linux.rtattr.ALIGNTO - 1);
+}
+
+// XDP program attachment using netlink
+fn attachProgram(ifindex: u32, prog_fd: i32, flags: u32) LoaderError!void {
+    // Create a netlink socket
+    const sock = posix.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE) catch {
+        return LoaderError.NetlinkError;
+    };
+    defer posix.close(sock);
+
+    // Bind the socket
+    var addr: linux.sockaddr.nl = .{
+        .pid = 0, // kernel will assign
+        .groups = 0,
+    };
+    posix.bind(sock, @ptrCast(&addr), @sizeOf(linux.sockaddr.nl)) catch {
+        return LoaderError.NetlinkError;
+    };
+
+    // Build the netlink message
+    var buf: [1024]u8 align(4) = undefined;
+    @memset(&buf, 0);
+
+    // Netlink message header
+    const nlh: *linux.nlmsghdr = @ptrCast(@alignCast(&buf[0]));
+    nlh.* = .{
+        .len = @sizeOf(linux.nlmsghdr) + @sizeOf(linux.ifinfomsg),
+        .type = .RTM_SETLINK,
+        .flags = linux.NLM_F_REQUEST | linux.NLM_F_ACK,
+        .seq = 1,
+        .pid = 0,
+    };
+
+    // Interface info message
+    const ifi: *linux.ifinfomsg = @ptrCast(@alignCast(&buf[@sizeOf(linux.nlmsghdr)]));
+    ifi.* = .{
+        .family = linux.AF.UNSPEC,
+        .type = 0,
+        .index = @intCast(ifindex),
+        .flags = 0,
+        .change = 0,
+    };
+
+    // Current offset for attributes
+    var offset = nlmsgAlign(@sizeOf(linux.nlmsghdr) + @sizeOf(linux.ifinfomsg));
+
+    // Add XDP nested attribute
+    const xdp_rta: *linux.rtattr = @ptrCast(@alignCast(&buf[offset]));
+    const xdp_rta_start = offset;
+    xdp_rta.len = @sizeOf(linux.rtattr);
+    xdp_rta.type = .{ .link = .XDP };
+    offset += @sizeOf(linux.rtattr);
+
+    // Add IFLA_XDP_FD attribute
+    const fd_rta: *linux.rtattr = @ptrCast(@alignCast(&buf[offset]));
+    fd_rta.len = @intCast(@sizeOf(linux.rtattr) + @sizeOf(i32));
+    fd_rta.type = .{ .link = @enumFromInt(@intFromEnum(IFLA_XDP.FD)) };
+    offset += @sizeOf(linux.rtattr);
+
+    const fd_ptr: *i32 = @ptrCast(@alignCast(&buf[offset]));
+    fd_ptr.* = prog_fd;
+    offset += @sizeOf(i32);
+    offset = rtaAlign(offset);
+
+    // Add IFLA_XDP_FLAGS attribute
+    const flags_rta: *linux.rtattr = @ptrCast(@alignCast(&buf[offset]));
+    flags_rta.len = @intCast(@sizeOf(linux.rtattr) + @sizeOf(u32));
+    flags_rta.type = .{ .link = @enumFromInt(@intFromEnum(IFLA_XDP.FLAGS)) };
+    offset += @sizeOf(linux.rtattr);
+
+    const flags_ptr: *u32 = @ptrCast(@alignCast(&buf[offset]));
+    flags_ptr.* = flags;
+    offset += @sizeOf(u32);
+    offset = rtaAlign(offset);
+
+    // Update XDP nested attribute length
+    xdp_rta.len = @intCast(offset - xdp_rta_start);
+
+    // Update total message length
+    nlh.len = @intCast(offset);
+
+    // Send the message
+    _ = posix.send(sock, buf[0..offset], 0) catch {
+        return LoaderError.NetlinkError;
+    };
+
+    // Receive the acknowledgment
+    var resp_buf: [4096]u8 align(4) = undefined;
+    const recv_len = posix.recv(sock, &resp_buf, 0) catch {
+        return LoaderError.NetlinkError;
+    };
+
+    // Parse the response
+    const resp_nlh: *const linux.nlmsghdr = @ptrCast(@alignCast(&resp_buf[0]));
+    if (resp_nlh.type == .ERROR) {
+        // Error message contains errno in the payload
+        if (recv_len >= @sizeOf(linux.nlmsghdr) + @sizeOf(i32)) {
+            const errno_ptr: *const i32 = @ptrCast(@alignCast(&resp_buf[@sizeOf(linux.nlmsghdr)]));
+            if (errno_ptr.* != 0) {
+                std.debug.print("XDP attach failed with errno: {}\n", .{-errno_ptr.*});
+                return LoaderError.AttachFailed;
+            }
+        }
+    }
 }
 
 fn removeProgram(ifindex: u32) LoaderError!void {
-    std.debug.print("To detach XDP program from ifindex {}:\n", .{ifindex});
-    std.debug.print("sudo ip link set dev <interface> xdp off\n", .{});
-    return LoaderError.DetachFailed;
+    // Create a netlink socket
+    const sock = posix.socket(linux.AF.NETLINK, linux.SOCK.RAW, linux.NETLINK.ROUTE) catch {
+        return LoaderError.NetlinkError;
+    };
+    defer posix.close(sock);
+
+    // Bind the socket
+    var addr: linux.sockaddr.nl = .{
+        .pid = 0,
+        .groups = 0,
+    };
+    posix.bind(sock, @ptrCast(&addr), @sizeOf(linux.sockaddr.nl)) catch {
+        return LoaderError.NetlinkError;
+    };
+
+    // Build the netlink message
+    var buf: [1024]u8 align(4) = undefined;
+    @memset(&buf, 0);
+
+    // Netlink message header
+    const nlh: *linux.nlmsghdr = @ptrCast(@alignCast(&buf[0]));
+    nlh.* = .{
+        .len = @sizeOf(linux.nlmsghdr) + @sizeOf(linux.ifinfomsg),
+        .type = .RTM_SETLINK,
+        .flags = linux.NLM_F_REQUEST | linux.NLM_F_ACK,
+        .seq = 1,
+        .pid = 0,
+    };
+
+    // Interface info message
+    const ifi: *linux.ifinfomsg = @ptrCast(@alignCast(&buf[@sizeOf(linux.nlmsghdr)]));
+    ifi.* = .{
+        .family = linux.AF.UNSPEC,
+        .type = 0,
+        .index = @intCast(ifindex),
+        .flags = 0,
+        .change = 0,
+    };
+
+    // Current offset for attributes
+    var offset = nlmsgAlign(@sizeOf(linux.nlmsghdr) + @sizeOf(linux.ifinfomsg));
+
+    // Add XDP nested attribute
+    const xdp_rta: *linux.rtattr = @ptrCast(@alignCast(&buf[offset]));
+    const xdp_rta_start = offset;
+    xdp_rta.len = @sizeOf(linux.rtattr);
+    xdp_rta.type = .{ .link = .XDP };
+    offset += @sizeOf(linux.rtattr);
+
+    // Add IFLA_XDP_FD attribute with -1 (detach)
+    const fd_rta: *linux.rtattr = @ptrCast(@alignCast(&buf[offset]));
+    fd_rta.len = @intCast(@sizeOf(linux.rtattr) + @sizeOf(i32));
+    fd_rta.type = .{ .link = @enumFromInt(@intFromEnum(IFLA_XDP.FD)) };
+    offset += @sizeOf(linux.rtattr);
+
+    const fd_ptr: *i32 = @ptrCast(@alignCast(&buf[offset]));
+    fd_ptr.* = -1; // -1 means detach
+    offset += @sizeOf(i32);
+    offset = rtaAlign(offset);
+
+    // Update XDP nested attribute length
+    xdp_rta.len = @intCast(offset - xdp_rta_start);
+
+    // Update total message length
+    nlh.len = @intCast(offset);
+
+    // Send the message
+    _ = posix.send(sock, buf[0..offset], 0) catch {
+        return LoaderError.NetlinkError;
+    };
+
+    // Receive the acknowledgment
+    var resp_buf: [4096]u8 align(4) = undefined;
+    const recv_len = posix.recv(sock, &resp_buf, 0) catch {
+        return LoaderError.NetlinkError;
+    };
+
+    // Parse the response
+    const resp_nlh: *const linux.nlmsghdr = @ptrCast(@alignCast(&resp_buf[0]));
+    if (resp_nlh.type == .ERROR) {
+        if (recv_len >= @sizeOf(linux.nlmsghdr) + @sizeOf(i32)) {
+            const errno_ptr: *const i32 = @ptrCast(@alignCast(&resp_buf[@sizeOf(linux.nlmsghdr)]));
+            if (errno_ptr.* != 0) {
+                std.debug.print("XDP detach failed with errno: {}\n", .{-errno_ptr.*});
+                return LoaderError.DetachFailed;
+            }
+        }
+    }
 }

@@ -294,7 +294,6 @@ pub const XDPSocket = struct {
         // Bind socket to interface
         try Self.bindSocket(xsk.Fd, ifIndex, queueId);
 
-        std.debug.print("✅ Created XDP socket - QueueId: {}, Fd: {}, IfIndex: {}\n", .{ queueId, xsk.Fd, ifIndex });
         return xsk;
     }
 

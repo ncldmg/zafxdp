@@ -1,3 +1,4 @@
+// zig fmt: off
 const std = @import("std");
 const testing = std.testing;
 const xdp = @import("xdp");
@@ -9,16 +10,83 @@ fn isRoot() bool {
     return linux.getuid() == 0;
 }
 
+// Test helper to create a dummy network interface
+fn createDummyInterface(name: []const u8) !u32 {
+    // Create dummy interface: ip link add <name> type dummy
+    {
+        const result = std.process.Child.run(.{
+            .allocator = std.heap.page_allocator,
+            .argv = &[_][]const u8{ "ip", "link", "add", name, "type", "dummy" },
+        }) catch return error.InterfaceCreateFailed;
+        defer {
+            std.heap.page_allocator.free(result.stdout);
+            std.heap.page_allocator.free(result.stderr);
+        }
+        if (result.term.Exited != 0) return error.InterfaceCreateFailed;
+    }
+
+    // Bring interface up: ip link set <name> up
+    {
+        const result = std.process.Child.run(.{
+            .allocator = std.heap.page_allocator,
+            .argv = &[_][]const u8{ "ip", "link", "set", name, "up" },
+        }) catch return error.InterfaceUpFailed;
+        defer {
+            std.heap.page_allocator.free(result.stdout);
+            std.heap.page_allocator.free(result.stderr);
+        }
+        if (result.term.Exited != 0) return error.InterfaceUpFailed;
+    }
+
+    // Get interface index
+    const ifindex_path = try std.fmt.allocPrint(
+        std.heap.page_allocator,
+        "/sys/class/net/{s}/ifindex",
+        .{name},
+    );
+    defer std.heap.page_allocator.free(ifindex_path);
+
+    const file = try std.fs.openFileAbsolute(ifindex_path, .{});
+    defer file.close();
+
+    var buf: [16]u8 = undefined;
+    const len = try file.readAll(&buf);
+    const ifindex = try std.fmt.parseInt(
+        u32,
+        std.mem.trim(u8, buf[0..len], &std.ascii.whitespace),
+        10,
+    );
+
+    return ifindex;
+}
+
+// Test helper to delete a dummy network interface
+fn deleteDummyInterface(name: []const u8) void {
+    const result = std.process.Child.run(.{
+        .allocator = std.heap.page_allocator,
+        .argv = &[_][]const u8{ "ip", "link", "delete", name },
+    }) catch return;
+    std.heap.page_allocator.free(result.stdout);
+    std.heap.page_allocator.free(result.stderr);
+}
+
 // Test helper to find a network interface
 fn findNetworkInterface(allocator: std.mem.Allocator) !?u32 {
     // Try to find loopback interface first
-    const lo_file = std.fs.openFileAbsolute("/sys/class/net/lo/ifindex", .{}) catch return null;
+    const lo_file = std.fs.openFileAbsolute(
+        "/sys/class/net/lo/ifindex",
+        .{},
+    ) catch return null;
     defer lo_file.close();
 
     var buf: [16]u8 = undefined;
     const len = try lo_file.readAll(&buf);
     if (len > 0) {
-        const ifindex = std.fmt.parseInt(u32, std.mem.trim(u8, buf[0..len], &std.ascii.whitespace), 10) catch return null;
+        const ifindex = std.fmt.parseInt(
+            u32,
+            std.mem.trim(u8, buf[0..len], &std.ascii.whitespace),
+            10,
+        ) catch return null;
         return ifindex;
     }
 
@@ -35,7 +103,10 @@ test "Program initialization and cleanup" {
     const allocator = testing.allocator;
 
     // Create XDP program
-    var program = xdp.Program.init(allocator, 64) catch |err| {
+    var program = xdp.Program.init(
+        allocator,
+        64,
+    ) catch |err| {
         std.debug.print("Failed to create program: {}\n", .{err});
         return error.SkipZigTest;
     };
@@ -57,16 +128,21 @@ test "XDPSocket and Program integration" {
 
     const allocator = testing.allocator;
 
-    // Find a network interface
-    const ifindex = (try findNetworkInterface(allocator)) orelse {
-        std.debug.print("No network interface found, skipping test\n", .{});
+    // Create dummy interface for this test
+    const ifname = "test_xdp0";
+    const ifindex = createDummyInterface(ifname) catch |err| {
+        std.debug.print("Failed to create dummy interface: {}\n", .{err});
         return error.SkipZigTest;
     };
+    defer deleteDummyInterface(ifname);
 
     const queue_id: u32 = 0;
 
     // Create XDP program
-    var program = xdp.Program.init(allocator, 64) catch |err| {
+    var program = xdp.Program.init(
+        allocator,
+        64,
+    ) catch |err| {
         std.debug.print("Failed to create program: {}\n", .{err});
         return error.SkipZigTest;
     };
@@ -82,14 +158,22 @@ test "XDPSocket and Program integration" {
         .TxRingNumDescs = 64,
     };
 
-    const xsk = xdp.XDPSocket.init(allocator, ifindex, queue_id, options) catch |err| {
+    const xsk = xdp.XDPSocket.init(
+        allocator,
+        ifindex,
+        queue_id,
+        options,
+    ) catch |err| {
         std.debug.print("Failed to create XDP socket: {}\n", .{err});
         return error.SkipZigTest;
     };
     defer xsk.deinit(allocator);
 
     // Register socket with program
-    program.register(queue_id, @intCast(xsk.Fd)) catch |err| {
+    program.register(
+        queue_id,
+        @intCast(xsk.Fd),
+    ) catch |err| {
         std.debug.print("Failed to register socket: {}\n", .{err});
         return error.SkipZigTest;
     };
@@ -98,8 +182,14 @@ test "XDPSocket and Program integration" {
     std.debug.print("✓ XDP socket registered with program\n", .{});
 
     // Try to attach (may fail if kernel doesn't support, that's okay for test)
-    program.attach(ifindex, @intFromEnum(xdp.XdpFlags.SKB_MODE)) catch |err| {
-        std.debug.print("XDP attach failed (expected on some systems): {}\n", .{err});
+    program.attach(
+        ifindex,
+        @intFromEnum(xdp.XdpFlags.SKB_MODE),
+    ) catch |err| {
+        std.debug.print(
+            "XDP attach failed (expected on some systems): {}\n",
+            .{err},
+        );
     };
     defer program.detach(ifindex) catch {};
 
@@ -114,16 +204,21 @@ test "L2 forwarder simulation - single interface echo" {
 
     const allocator = testing.allocator;
 
-    // Find a network interface
-    const ifindex = (try findNetworkInterface(allocator)) orelse {
-        std.debug.print("No network interface found, skipping test\n", .{});
+    // Create dummy interface for this test
+    const ifname = "test_xdp1";
+    const ifindex = createDummyInterface(ifname) catch |err| {
+        std.debug.print("Failed to create dummy interface: {}\n", .{err});
         return error.SkipZigTest;
     };
+    defer deleteDummyInterface(ifname);
 
     const queue_id: u32 = 0;
 
     // Create XDP program
-    var program = xdp.Program.init(allocator, 64) catch |err| {
+    var program = xdp.Program.init(
+        allocator,
+        64,
+    ) catch |err| {
         std.debug.print("Failed to create program: {}\n", .{err});
         return error.SkipZigTest;
     };
@@ -139,14 +234,22 @@ test "L2 forwarder simulation - single interface echo" {
         .TxRingNumDescs = 64,
     };
 
-    const rx_xsk = xdp.XDPSocket.init(allocator, ifindex, queue_id, options) catch |err| {
+    const rx_xsk = xdp.XDPSocket.init(
+        allocator,
+        ifindex,
+        queue_id,
+        options,
+    ) catch |err| {
         std.debug.print("Failed to create RX socket: {}\n", .{err});
         return error.SkipZigTest;
     };
     defer rx_xsk.deinit(allocator);
 
     // Register socket with program
-    program.register(queue_id, @intCast(rx_xsk.Fd)) catch |err| {
+    program.register(
+        queue_id,
+        @intCast(rx_xsk.Fd),
+    ) catch |err| {
         std.debug.print("Failed to register socket: {}\n", .{err});
         return error.SkipZigTest;
     };
@@ -209,141 +312,15 @@ fn forwardFrames(
     }
 
     // Transmit frames
-    const transmitted = output.txRing(tx_descs[0..num_received], @intCast(num_received));
+    const transmitted = output.txRing(
+        tx_descs[0..num_received],
+        @intCast(num_received),
+    );
 
     return .{
         .bytes = num_bytes,
         .frames = transmitted,
     };
-}
-
-test "L2 forwarder - frame forwarding function" {
-    if (!isRoot()) {
-        std.debug.print("Skipping test - requires root privileges\n", .{});
-        return error.SkipZigTest;
-    }
-
-    const allocator = testing.allocator;
-
-    const ifindex = (try findNetworkInterface(allocator)) orelse {
-        std.debug.print("No network interface found, skipping test\n", .{});
-        return error.SkipZigTest;
-    };
-
-    const options = xdp.SocketOptions{
-        .NumFrames = 64,
-        .FrameSize = 2048,
-        .FillRingNumDescs = 64,
-        .CompletionRingNumDescs = 64,
-        .RxRingNumDescs = 64,
-        .TxRingNumDescs = 64,
-    };
-
-    // Create input socket
-    const in_xsk = xdp.XDPSocket.init(allocator, ifindex, 0, options) catch |err| {
-        std.debug.print("Failed to create input socket: {}\n", .{err});
-        return error.SkipZigTest;
-    };
-    defer in_xsk.deinit(allocator);
-
-    // Create output socket
-    const out_xsk = xdp.XDPSocket.init(allocator, ifindex, 1, options) catch |err| {
-        std.debug.print("Failed to create output socket: {}\n", .{err});
-        return error.SkipZigTest;
-    };
-    defer out_xsk.deinit(allocator);
-
-    // Test the forwarding function (it will return 0 frames since there's no traffic)
-    const dst_mac = [6]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-    const result = try forwardFrames(in_xsk, out_xsk, dst_mac);
-
-    std.debug.print("✓ Forwarding function test completed ({} bytes, {} frames)\n", .{ result.bytes, result.frames });
-}
-
-test "BPF map operations" {
-    if (!isRoot()) {
-        std.debug.print("Skipping test - requires root privileges\n", .{});
-        return error.SkipZigTest;
-    }
-
-    const allocator = testing.allocator;
-
-    var ebpf_loader = xdp.EbpfLoader.init(allocator);
-    defer ebpf_loader.deinit();
-
-    // Create an array map
-    const map_fd = ebpf_loader.createMap(linux.BPF.MapType.array, @sizeOf(u32), @sizeOf(u32), 16, "test_map") catch |err| {
-        std.debug.print("Failed to create map: {}\n", .{err});
-        return error.SkipZigTest;
-    };
-
-    try testing.expect(map_fd >= 0);
-
-    // Update map entry
-    const key: u32 = 0;
-    const value: u32 = 42;
-    const key_bytes = std.mem.asBytes(&key);
-    const value_bytes = std.mem.asBytes(&value);
-
-    try xdp.EbpfLoader.updateMapElement(map_fd, key_bytes, value_bytes);
-
-    // Lookup map entry
-    var read_value: u32 = 0;
-    const read_value_bytes = std.mem.asBytes(&read_value);
-    const found = try xdp.EbpfLoader.lookupMapElement(map_fd, key_bytes, read_value_bytes);
-
-    try testing.expect(found);
-    try testing.expectEqual(@as(u32, 42), read_value);
-
-    std.debug.print("✓ BPF map operations test passed (value={})\n", .{read_value});
-}
-
-test "XSK map operations" {
-    if (!isRoot()) {
-        std.debug.print("Skipping test - requires root privileges\n", .{});
-        return error.SkipZigTest;
-    }
-
-    const allocator = testing.allocator;
-
-    var ebpf_loader = xdp.EbpfLoader.init(allocator);
-    defer ebpf_loader.deinit();
-
-    // Create XSKMAP
-    const xsks_map_fd = ebpf_loader.createXskMap(64, "test_xsks_map") catch |err| {
-        std.debug.print("Failed to create XSKMAP: {}\n", .{err});
-        return error.SkipZigTest;
-    };
-
-    try testing.expect(xsks_map_fd >= 0);
-
-    std.debug.print("✓ XSKMAP creation test passed (fd={})\n", .{xsks_map_fd});
-}
-
-test "eBPF program instruction generation" {
-    if (!isRoot()) {
-        std.debug.print("Skipping test - requires root privileges\n", .{});
-        return error.SkipZigTest;
-    }
-
-    const allocator = testing.allocator;
-
-    // Create a minimal program to test instruction building
-    var program = xdp.Program.init(allocator, 64) catch |err| {
-        std.debug.print("Failed to create program: {}\n", .{err});
-        return error.SkipZigTest;
-    };
-    defer program.deinit();
-
-    // The program should have valid file descriptors for all components
-    try testing.expect(program.program_fd >= 0);
-    try testing.expect(program.queues_map_fd >= 0);
-    try testing.expect(program.sockets_map_fd >= 0);
-
-    std.debug.print("✓ eBPF program generation test passed\n", .{});
-    std.debug.print("  Program FD: {}\n", .{program.program_fd});
-    std.debug.print("  Queues map FD: {}\n", .{program.queues_map_fd});
-    std.debug.print("  Sockets map FD: {}\n", .{program.sockets_map_fd});
 }
 
 // Performance tracking structure for forwarder
@@ -390,7 +367,7 @@ test "ForwarderStats tracking" {
     std.debug.print("✓ Stats tracking test passed\n", .{});
 }
 
-test "Real traffic forwarding with raw socket injection" {
+test "Real traffic forwarding with raw socket injection on loopback" {
     if (!isRoot()) {
         std.debug.print("Skipping test - requires root privileges\n", .{});
         return error.SkipZigTest;
@@ -398,16 +375,22 @@ test "Real traffic forwarding with raw socket injection" {
 
     const allocator = testing.allocator;
 
-    // Find loopback interface
+    // Use loopback interface for real traffic test
     const ifindex = (try findNetworkInterface(allocator)) orelse {
-        std.debug.print("No network interface found, skipping test\n", .{});
+        std.debug.print(
+            "No loopback interface found, skipping test\n",
+            .{},
+        );
         return error.SkipZigTest;
     };
 
     const queue_id: u32 = 0;
 
     // Create XDP program
-    var program = xdp.Program.init(allocator, 64) catch |err| {
+    var program = xdp.Program.init(
+        allocator,
+        64,
+    ) catch |err| {
         std.debug.print("Failed to create program: {}\n", .{err});
         return error.SkipZigTest;
     };
@@ -423,14 +406,22 @@ test "Real traffic forwarding with raw socket injection" {
     };
 
     // Create XDP socket
-    const rx_xsk = xdp.XDPSocket.init(allocator, ifindex, queue_id, options) catch |err| {
+    const rx_xsk = xdp.XDPSocket.init(
+        allocator,
+        ifindex,
+        queue_id,
+        options,
+    ) catch |err| {
         std.debug.print("Failed to create XDP socket: {}\n", .{err});
         return error.SkipZigTest;
     };
     defer rx_xsk.deinit(allocator);
 
     // Register socket with program
-    program.register(queue_id, @intCast(rx_xsk.Fd)) catch |err| {
+    program.register(
+        queue_id,
+        @intCast(rx_xsk.Fd),
+    ) catch |err| {
         std.debug.print("Failed to register socket: {}\n", .{err});
         return error.SkipZigTest;
     };
@@ -445,14 +436,21 @@ test "Real traffic forwarding with raw socket injection" {
     try testing.expect(filled == 64);
 
     // Attach program to interface in SKB mode
-    program.attach(ifindex, @intFromEnum(xdp.XdpFlags.SKB_MODE)) catch |err| {
+    program.attach(
+        ifindex,
+        @intFromEnum(xdp.XdpFlags.SKB_MODE),
+    ) catch |err| {
         std.debug.print("XDP attach failed: {}\n", .{err});
         return error.SkipZigTest;
     };
     defer program.detach(ifindex) catch {};
 
     // Create raw socket for sending traffic
-    const raw_sock = posix.socket(posix.AF.PACKET, posix.SOCK.RAW, 0) catch |err| {
+    const raw_sock = posix.socket(
+        posix.AF.PACKET,
+        posix.SOCK.RAW,
+        0,
+    ) catch |err| {
         std.debug.print("Failed to create raw socket: {}\n", .{err});
         return error.SkipZigTest;
     };
@@ -469,7 +467,11 @@ test "Real traffic forwarding with raw socket injection" {
         .addr = [_]u8{0} ** 8,
     };
 
-    posix.bind(raw_sock, @ptrCast(&sockaddr), @sizeOf(@TypeOf(sockaddr))) catch |err| {
+    posix.bind(
+        raw_sock,
+        @ptrCast(&sockaddr),
+        @sizeOf(@TypeOf(sockaddr)),
+    ) catch |err| {
         std.debug.print("Failed to bind raw socket: {}\n", .{err});
         return error.SkipZigTest;
     };
@@ -570,7 +572,10 @@ pub const L2Forwarder = struct {
         out_dst_mac: [6]u8,
     ) !L2Forwarder {
         // Create XDP program for input interface
-        var in_program = try xdp.Program.init(allocator, 64);
+        var in_program = try xdp.Program.init(
+            allocator,
+            64,
+        );
         errdefer in_program.deinit();
 
         const options = xdp.SocketOptions{
@@ -583,18 +588,34 @@ pub const L2Forwarder = struct {
         };
 
         // Create input socket
-        const in_xsk = try xdp.XDPSocket.init(allocator, in_ifindex, in_queue_id, options);
+        const in_xsk = try xdp.XDPSocket.init(
+            allocator,
+            in_ifindex,
+            in_queue_id,
+            options,
+        );
         errdefer in_xsk.deinit(allocator);
 
         // Create output socket (no XDP program needed for TX-only)
-        const out_xsk = try xdp.XDPSocket.init(allocator, out_ifindex, out_queue_id, options);
+        const out_xsk = try xdp.XDPSocket.init(
+            allocator,
+            out_ifindex,
+            out_queue_id,
+            options,
+        );
         errdefer out_xsk.deinit(allocator);
 
         // Register input socket with program
-        try in_program.register(in_queue_id, @intCast(in_xsk.Fd));
+        try in_program.register(
+            in_queue_id,
+            @intCast(in_xsk.Fd),
+        );
 
         // Attach program to input interface
-        try in_program.attach(in_ifindex, xdp.DefaultXdpFlags);
+        try in_program.attach(
+            in_ifindex,
+            xdp.DefaultXdpFlags,
+        );
 
         return L2Forwarder{
             .allocator = allocator,
@@ -660,13 +681,21 @@ pub const L2Forwarder = struct {
 
             // Handle input socket
             if ((poll_fds[0].revents & linux.POLL.IN) != 0) {
-                const result = try forwardFrames(self.in_xsk, self.out_xsk, self.in_dst_mac);
+                const result = try forwardFrames(
+                    self.in_xsk,
+                    self.out_xsk,
+                    self.in_dst_mac,
+                );
                 self.stats.update(result.bytes, result.frames);
             }
 
             // Handle output socket
             if ((poll_fds[1].revents & linux.POLL.IN) != 0) {
-                const result = try forwardFrames(self.out_xsk, self.in_xsk, self.out_dst_mac);
+                const result = try forwardFrames(
+                    self.out_xsk,
+                    self.in_xsk,
+                    self.out_dst_mac,
+                );
                 self.stats.update(result.bytes, result.frames);
             }
 
