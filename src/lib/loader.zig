@@ -403,7 +403,6 @@ pub const Program = struct {
 //
 //    return XDP_PASS;
 // }
-
 // TODO: use zbpf lib
 fn buildXdpProgram(allocator: mem.Allocator, qidconf_fd: i32, xsks_fd: i32) LoaderError![]BPF.Insn {
     var insns: ArrayList(BPF.Insn) = .{};
