@@ -6,7 +6,7 @@ const processor = @import("processor.zig");
 const PacketAction = processor.PacketAction;
 const ProcessResult = processor.ProcessResult;
 
-/// Pipeline configuration
+// Pipeline configuration
 pub const PipelineConfig = struct {
     /// Stop on first Drop?
     stop_on_drop: bool = true,
@@ -18,7 +18,7 @@ pub const PipelineConfig = struct {
     max_stages: usize = 16,
 };
 
-/// Virtual table for type-erased processors
+// Virtual table for type-erased processors
 const StageVtable = struct {
     process: *const fn (processor_ptr: *anyopaque, packet: *Packet) anyerror!ProcessResult,
     processBatch: *const fn (processor_ptr: *anyopaque, packets: []Packet, results: []ProcessResult) anyerror!u32,
@@ -26,7 +26,7 @@ const StageVtable = struct {
     deinitContext: *const fn (processor_ptr: *anyopaque) void,
 };
 
-/// Pipeline: chains multiple processors together
+// Pipeline: chains multiple processors together
 pub const Pipeline = struct {
     allocator: mem.Allocator,
     stages: ArrayList(*anyopaque), // Type-erased processors
@@ -53,7 +53,7 @@ pub const Pipeline = struct {
         self.stage_fns.deinit(self.allocator);
     }
 
-    /// Add processor to pipeline
+    // Add processor to pipeline
     pub fn addStage(self: *Self, comptime P: type, proc: *P) !void {
         if (self.stages.items.len >= self.config.max_stages) {
             return error.TooManyStages;
@@ -91,7 +91,7 @@ pub const Pipeline = struct {
         try self.stage_fns.items[self.stage_fns.items.len - 1].initContext(self.stages.items[self.stages.items.len - 1]);
     }
 
-    /// Process packet through all stages
+    // Process packet through all stages
     pub fn process(self: *Self, packet: *Packet) !ProcessResult {
         var result = ProcessResult{ .action = .Pass };
 
@@ -112,7 +112,7 @@ pub const Pipeline = struct {
         return result;
     }
 
-    /// Batch processing through pipeline
+    // Batch processing through pipeline
     pub fn processBatch(self: *Self, packets: []Packet, results: []ProcessResult) !u32 {
         // Initialize all as Pass
         for (results) |*r| {
@@ -145,7 +145,7 @@ pub const Pipeline = struct {
         return @intCast(active_count);
     }
 
-    /// Get number of stages in pipeline
+    // Get number of stages in pipeline
     pub fn stageCount(self: *const Self) usize {
         return self.stages.items.len;
     }
