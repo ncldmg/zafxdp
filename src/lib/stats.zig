@@ -1,6 +1,6 @@
 const std = @import("std");
 
-/// Service statistics with atomic counters
+// Service statistics with atomic counters
 pub const ServiceStats = struct {
     packets_received: std.atomic.Value(u64),
     packets_transmitted: std.atomic.Value(u64),

@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 
-/// Ethernet frame header (14 bytes)
+// Ethernet frame header (14 bytes)
 pub const EthernetHeader = struct {
     destination: [6]u8,
     source: [6]u8,
@@ -50,7 +50,7 @@ pub const EtherType = struct {
     pub const IPv6: u16 = 0x86DD;
 };
 
-/// IPv4 header (minimum 20 bytes)
+// IPv4 header (minimum 20 bytes)
 pub const IPv4Header = struct {
     version: u4,
     ihl: u4, // Internet Header Length (in 32-bit words)
@@ -148,9 +148,7 @@ pub const IPv4Header = struct {
         try writer.print("{}.{}.{}.{} -> {}.{}.{}.{} proto={} ttl={} len={}", .{
             self.source[0],      self.source[1],      self.source[2],      self.source[3],
             self.destination[0], self.destination[1], self.destination[2], self.destination[3],
-            self.protocol,
-            self.ttl,
-            self.total_length,
+            self.protocol,       self.ttl,            self.total_length,
         });
     }
 };
@@ -162,7 +160,7 @@ pub const IpProtocol = struct {
     pub const ICMPv6: u8 = 58;
 };
 
-/// TCP header (minimum 20 bytes)
+// TCP header (minimum 20 bytes)
 pub const TcpHeader = struct {
     source_port: u16,
     destination_port: u16,
@@ -276,7 +274,7 @@ pub const TcpFlags = packed struct {
     }
 };
 
-/// UDP header (8 bytes)
+// UDP header (8 bytes)
 pub const UdpHeader = struct {
     source_port: u16,
     destination_port: u16,
@@ -320,7 +318,7 @@ pub const UdpHeader = struct {
     }
 };
 
-/// ICMP header (8 bytes minimum)
+// ICMP header (8 bytes minimum)
 pub const IcmpHeader = struct {
     type: u8,
     code: u8,
@@ -349,7 +347,7 @@ pub const IcmpHeader = struct {
     }
 };
 
-/// ARP packet (28 bytes for IPv4 over Ethernet)
+// ARP packet (28 bytes for IPv4 over Ethernet)
 pub const ArpHeader = struct {
     hardware_type: u16,
     protocol_type: u16,

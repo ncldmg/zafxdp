@@ -17,7 +17,7 @@ pub const XDPDesc = xsk_mod.XDPDesc;
 pub const Program = loader_mod.Program;
 pub const ServiceStats = stats_mod.ServiceStats;
 
-/// XDP flags for program attachment
+// XDP flags for program attachment
 pub const XdpFlags = enum(u32) {
     UPDATE_IF_NOEXIST = 1 << 0,
     SKB_MODE = 1 << 1,
@@ -28,18 +28,18 @@ pub const XdpFlags = enum(u32) {
 
 pub const DefaultXdpFlags = @intFromEnum(XdpFlags.SKB_MODE) | @intFromEnum(XdpFlags.UPDATE_IF_NOEXIST);
 
-/// Interface configuration for service
+// Interface configuration for service
 pub const InterfaceConfig = struct {
     name: []const u8,
     queues: []const u32, // Which queues to bind to
 };
 
-/// Service configuration
+// Service configuration
 pub const ServiceConfig = struct {
-    /// Interfaces to attach to
+    // Interfaces to attach to
     interfaces: []const InterfaceConfig,
 
-    /// Socket options (buffer sizes, etc.)
+    // Socket options (buffer sizes, etc.)
     socket_options: SocketOptions = .{
         .NumFrames = 2048,
         .FrameSize = 2048,
@@ -49,20 +49,20 @@ pub const ServiceConfig = struct {
         .TxRingNumDescs = 1024,
     },
 
-    /// XDP flags (SKB_MODE, DRV_MODE, etc.)
+    // XDP flags (SKB_MODE, DRV_MODE, etc.)
     xdp_flags: u32 = DefaultXdpFlags,
 
-    /// Batch size for packet processing
+    // Batch size for packet processing
     batch_size: u32 = 64,
 
-    /// Enable statistics collection
+    // Enable statistics collection
     collect_stats: bool = true,
 
-    /// Poll timeout in milliseconds
+    // Poll timeout in milliseconds
     poll_timeout_ms: i32 = 100,
 };
 
-/// Get interface index from name
+// Get interface index from name
 pub fn getInterfaceIndex(name: []const u8) !u32 {
     const path = try std.fmt.allocPrint(
         std.heap.page_allocator,
@@ -85,7 +85,7 @@ pub fn getInterfaceIndex(name: []const u8) !u32 {
     return ifindex;
 }
 
-/// Socket with associated metadata
+// Socket with associated metadata
 const SocketInfo = struct {
     socket: *XDPSocket,
     ifindex: u32,
@@ -93,7 +93,7 @@ const SocketInfo = struct {
     interface_name: []const u8,
 };
 
-/// High-level AF_XDP service
+// High-level AF_XDP service
 pub const Service = struct {
     allocator: mem.Allocator,
     config: ServiceConfig,
@@ -183,7 +183,7 @@ pub const Service = struct {
         self.program.deinit();
     }
 
-    /// Start service (spawns worker threads)
+    // Start service (spawns worker threads)
     pub fn start(self: *Self) !void {
         if (self.running.load(.seq_cst)) {
             return error.AlreadyRunning;
@@ -210,7 +210,7 @@ pub const Service = struct {
         }
     }
 
-    /// Stop service (joins worker threads)
+    // Stop service (joins worker threads)
     pub fn stop(self: *Self) void {
         if (!self.running.load(.seq_cst)) {
             return;
@@ -224,18 +224,18 @@ pub const Service = struct {
         self.workers.clearRetainingCapacity();
     }
 
-    /// Get statistics snapshot
+    // Get statistics snapshot
     pub fn getStats(self: *Self) stats_mod.StatsSnapshot {
         return self.stats.snapshot();
     }
 
-    /// Reset statistics
+    // Reset statistics
     pub fn resetStats(self: *Self) void {
         self.stats.reset();
     }
 };
 
-/// Worker thread main loop
+// Worker thread main loop
 fn workerLoop(
     socket: *XDPSocket,
     pipeline: *Pipeline,
