@@ -1,7 +1,7 @@
 const std = @import("std");
 const Packet = @import("packet.zig").Packet;
 
-/// Packet processing decision
+// Packet processing decision
 pub const PacketAction = enum {
     Drop, // Discard packet
     Pass, // Continue to next processor (or kernel if last)
@@ -9,35 +9,35 @@ pub const PacketAction = enum {
     Recirculate, // Re-inject into processing pipeline
 };
 
-/// Target for transmit action
+// Target for transmit action
 pub const TransmitTarget = struct {
     ifindex: u32,
     queue_id: u32,
 };
 
-/// Result of packet processing
+// Result of packet processing
 pub const ProcessResult = struct {
     action: PacketAction,
     target: ?TransmitTarget = null, // Required for Transmit action
     modified: bool = false, // Did we modify packet data?
 };
 
-/// Generic packet processor interface
-/// Context: User-defined state/config for the processor
+// Generic packet processor interface
+// Context: User-defined state/config for the processor
 pub fn PacketProcessor(comptime Context: type) type {
     return struct {
         const Self = @This();
 
-        /// User-defined context (state, config, counters)
+        // User-defined context (state, config, counters)
         context: Context,
 
-        /// Process a single packet
+        // Process a single packet
         processFn: *const fn (ctx: *Context, packet: *Packet) anyerror!ProcessResult,
 
-        /// Optional: process batch of packets (for efficiency)
+        // Optional: process batch of packets (for efficiency)
         processBatchFn: ?*const fn (ctx: *Context, packets: []Packet, results: []ProcessResult) anyerror!u32 = null,
 
-        /// Optional: lifecycle hooks
+        // Optional: lifecycle hooks
         initFn: ?*const fn (ctx: *Context) anyerror!void = null,
         deinitFn: ?*const fn (ctx: *Context) void = null,
 
