@@ -412,7 +412,7 @@ pub const XDPSocket = struct {
         const queued = self.txRing(descs[0..sent], sent);
 
         if (queued > 0) {
-            const rc = os.linux.sendto(self.Fd, null, 0, os.linux.MSG.DONTWAIT, null, 0);
+            const rc = os.linux.sendto(self.Fd, undefined, 0, os.linux.MSG.DONTWAIT, null, 0);
             if (rc < 0) {
                 const err = posix.errno(rc);
                 if (err != .AGAIN and err != .WOULDBLOCK) {
@@ -446,7 +446,7 @@ pub const XDPSocket = struct {
 
     // Kick the socket to wake up the kernel
     pub fn kick(self: *Self) !void {
-        const rc = os.linux.sendto(self.Fd, null, 0, os.linux.MSG.DONTWAIT, null, 0);
+        const rc = os.linux.sendto(self.Fd, undefined, 0, os.linux.MSG.DONTWAIT, null, 0);
         if (rc < 0) {
             const err = posix.errno(rc);
             if (err != .AGAIN and err != .WOULDBLOCK) {

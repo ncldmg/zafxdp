@@ -1,6 +1,66 @@
 # zafxdp - AF_XDP for Zig
 
-A pure Zig implementation of AF_XDP (Address Family XDP) sockets with eBPF program loading.
+A pure Zig implementation of AF_XDP (Address Family XDP) sockets with eBPF program loading, featuring both **low-level** and **high-level** APIs for building high-performance networking applications.
+
+## Key Features
+
+- **High-Level Service API**: Build complex networking services with minimal code
+- **Zero-Copy Packet Processing**: Direct UMEM access with lazy protocol parsing
+- **Composable Pipeline Architecture**: Chain multiple packet processors together
+- **Protocol Parsers**: Built-in support for Ethernet, IPv4, TCP, UDP, ICMP, ARP
+- **Multi-threaded Workers**: Automatic worker thread management per queue
+- **Low-Level Control**: Direct access to XDP sockets and eBPF programs when needed
+
+## Quick Start: High-Level API
+
+Build a simple L2 packet forwarder in ~30 lines of code:
+
+```zig
+const std = @import("std");
+const xdp = @import("zafxdp");
+
+// Define your packet processing logic
+const ForwarderContext = struct {
+    dst_ifindex: u32,
+
+    fn process(ctx: *ForwarderContext, packet: *xdp.Packet) !xdp.ProcessResult {
+        return .{
+            .action = .Transmit,
+            .target = .{ .ifindex = ctx.dst_ifindex, .queue_id = packet.source.queue_id },
+        };
+    }
+};
+
+pub fn main() !void {
+    const allocator = std.heap.page_allocator;
+
+    // Create processor
+    var ctx = ForwarderContext{ .dst_ifindex = try xdp.getInterfaceIndex("eth1") };
+    var processor = xdp.PacketProcessor(ForwarderContext){
+        .context = ctx,
+        .processFn = ForwarderContext.process,
+    };
+
+    // Create pipeline
+    var pipeline = xdp.Pipeline.init(allocator, .{});
+    defer pipeline.deinit();
+    try pipeline.addStage(@TypeOf(processor), &processor);
+
+    // Create and start service
+    var service = try xdp.Service.init(allocator, .{
+        .interfaces = &[_]xdp.InterfaceConfig{
+            .{ .name = "eth0", .queues = &[_]u32{0} },
+        },
+    }, &pipeline);
+    defer service.deinit();
+
+    try service.start();
+    std.time.sleep(10 * std.time.ns_per_s);
+    service.stop();
+}
+```
+
+**See [examples/](examples/) for more examples and [API_DESIGN.md](API_DESIGN.md) for the complete API documentation.**
 
 ---
 
@@ -9,34 +69,130 @@ A pure Zig implementation of AF_XDP (Address Family XDP) sockets with eBPF progr
 ```
 zafxdp/
 ├── src/
-│   ├── lib/           # Library code
-│   │   ├── root.zig   # Main API entry point (re-exports all public APIs)
-│   │   ├── xsk.zig    # AF_XDP socket implementation (XDPSocket)
-│   │   └── loader.zig # eBPF program and map loader (EbpfLoader, Program)
-│   └── cmd/           # CLI application
-│       └── main.zig   # Command-line interface for packet capture
-└── build.zig          # Build configuration
+│   ├── lib/              # Library code
+│   │   ├── root.zig      # Main API entry point (re-exports all APIs)
+│   │   ├── xsk.zig       # AF_XDP socket implementation (low-level)
+│   │   ├── loader.zig    # eBPF program loader (low-level)
+│   │   ├── protocol.zig  # Protocol parsers (Ethernet, IPv4, TCP, UDP, etc.)
+│   │   ├── packet.zig    # Zero-copy packet abstraction
+│   │   ├── processor.zig # Packet processor interface
+│   │   ├── pipeline.zig  # Pipeline for chaining processors
+│   │   ├── stats.zig     # Statistics collection
+│   │   └── service.zig   # High-level service management
+│   └── cmd/              # CLI application
+│       └── main.zig      # Command-line tool
+├── examples/             # Example programs
+│   ├── simple_forwarder.zig
+│   └── README.md
+├── API_DESIGN.md         # Detailed API documentation
+└── build.zig             # Build configuration
 ```
-
-The library is organized into focused modules in `src/lib/`, with a separate CLI tool in `src/cmd/`
 
 Import the library using a single import:
 
 ```zig
-const xdp = @import("zafxdp"); // or @import("root.zig") in tests
+const xdp = @import("zafxdp");
 
-// All APIs available under xdp namespace:
-// - xdp.XDPSocket
-// - xdp.SocketOptions
-// - xdp.Program
-// - xdp.EbpfLoader
-// - xdp.XdpFlags
-// etc.
+// High-level API (recommended):
+// - xdp.Service, xdp.Pipeline, xdp.PacketProcessor
+// - xdp.Packet, xdp.EthernetHeader, xdp.IPv4Header, etc.
+
+// Low-level API (for advanced use):
+// - xdp.XDPSocket, xdp.Program, xdp.EbpfLoader
 ```
 
 ---
 
-## API Overview
+## High-Level API Overview
+
+The high-level API provides an abstraction for building complex networking services. It consists of:
+
+### 1. Packet Abstraction
+
+Zero-copy packet reference with lazy protocol parsing:
+
+```zig
+var packet: xdp.Packet = // ... received from service
+
+// Parse protocols on-demand (cached)
+const eth = try packet.ethernet();
+const ip = try packet.ipv4();
+const tcp = try packet.tcp();
+
+std.debug.print("TCP {} -> {}\n", .{tcp.source_port, tcp.destination_port});
+```
+
+### 2. Packet Processor
+
+Define custom packet processing logic:
+
+```zig
+const MyContext = struct {
+    counter: u64 = 0,
+
+    fn process(ctx: *MyContext, packet: *xdp.Packet) !xdp.ProcessResult {
+        ctx.counter += 1;
+
+        // Parse and inspect packet
+        const eth = try packet.ethernet();
+        if (eth.ethertype == xdp.EtherType.IPv4) {
+            return .{ .action = .Pass };  // Continue processing
+        }
+
+        return .{ .action = .Drop };  // Drop non-IPv4 packets
+    }
+};
+```
+
+**Actions**: `Drop`, `Pass`, `Transmit`, `Recirculate`
+
+### 3. Pipeline
+
+Chain multiple processors together:
+
+```zig
+var pipeline = xdp.Pipeline.init(allocator, .{});
+defer pipeline.deinit();
+
+// Add processors in order
+try pipeline.addStage(@TypeOf(mac_filter), &mac_filter);
+try pipeline.addStage(@TypeOf(counter), &counter);
+try pipeline.addStage(@TypeOf(forwarder), &forwarder);
+
+// Packets flow through: MAC Filter -> Counter -> Forwarder
+```
+
+### 4. Service
+
+High-level service managing sockets, workers, and statistics:
+
+```zig
+var service = try xdp.Service.init(allocator, .{
+    .interfaces = &[_]xdp.InterfaceConfig{
+        .{ .name = "eth0", .queues = &[_]u32{0, 1} },
+    },
+    .batch_size = 64,
+    .poll_timeout_ms = 100,
+}, &pipeline);
+defer service.deinit();
+
+try service.start();  // Spawns worker threads
+// ... service is running ...
+service.stop();       // Stops and joins workers
+
+// Get statistics
+const stats = service.getStats();
+std.debug.print("RX: {} pkts, TX: {} pkts\n", .{
+    stats.packets_received,
+    stats.packets_transmitted
+});
+```
+
+For complete documentation, see **[API_DESIGN.md](API_DESIGN.md)** and **[examples/](examples/)**.
+
+---
+
+## Low-Level API Overview
 
 The library provides helpers to work with AF_XDP sockets.
 
