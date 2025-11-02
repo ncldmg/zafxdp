@@ -222,3 +222,84 @@ pub const Packet = struct {
         });
     }
 };
+
+// Tests
+const testing = std.testing;
+
+test "Protocol parsing with Packet API" {
+    _ = testing.allocator;
+
+    // Create a simple Ethernet frame with IPv4/UDP
+    var frame_data: [128]u8 = undefined;
+    @memset(&frame_data, 0);
+
+    // Ethernet header
+    const dst_mac = [_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+    const src_mac = [_]u8{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55 };
+    @memcpy(frame_data[0..6], &dst_mac);
+    @memcpy(frame_data[6..12], &src_mac);
+    std.mem.writeInt(u16, frame_data[12..14], 0x0800, .big); // IPv4
+
+    // Simple IPv4 header (version=4, ihl=5, total_length=20)
+    frame_data[14] = 0x45; // version=4, ihl=5
+    frame_data[15] = 0x00; // DSCP/ECN
+    std.mem.writeInt(u16, frame_data[16..18], 48, .big); // total length
+    frame_data[23] = 17; // protocol = UDP
+    // Source IP: 192.168.1.1
+    frame_data[26] = 192;
+    frame_data[27] = 168;
+    frame_data[28] = 1;
+    frame_data[29] = 1;
+    // Dest IP: 192.168.1.2
+    frame_data[30] = 192;
+    frame_data[31] = 168;
+    frame_data[32] = 1;
+    frame_data[33] = 2;
+
+    // UDP header at offset 34
+    std.mem.writeInt(u16, frame_data[34..36], 12345, .big); // src port
+    std.mem.writeInt(u16, frame_data[36..38], 53, .big); // dst port (DNS)
+    std.mem.writeInt(u16, frame_data[38..40], 28, .big); // length
+    std.mem.writeInt(u16, frame_data[40..42], 0, .big); // checksum
+
+    // Create a packet
+    const desc = XDPDesc{
+        .addr = 0,
+        .len = 62,
+        .options = 0,
+    };
+
+    var packet = Packet.init(&frame_data, desc, .{
+        .ifindex = 1,
+        .queue_id = 0,
+    });
+
+    // Parse Ethernet
+    const eth = try packet.ethernet();
+    try testing.expectEqual(@as(u16, 0x0800), eth.ethertype);
+    try testing.expectEqualSlices(u8, &src_mac, &eth.source);
+
+    // Parse IPv4
+    const ipv4 = try packet.ipv4();
+    try testing.expectEqual(@as(u8, 4), ipv4.version);
+    try testing.expectEqual(@as(u8, 17), ipv4.protocol); // UDP
+    try testing.expectEqualSlices(u8, &[_]u8{ 192, 168, 1, 1 }, &ipv4.source);
+
+    // Parse UDP
+    const udp = try packet.udp();
+    try testing.expectEqual(@as(u16, 12345), udp.source_port);
+    try testing.expectEqual(@as(u16, 53), udp.destination_port);
+
+    std.debug.print("✓ Protocol parsing test passed\n", .{});
+    std.debug.print("  Ethernet: {x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2} -> {x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}\n", .{
+        eth.source[0],      eth.source[1],      eth.source[2],
+        eth.source[3],      eth.source[4],      eth.source[5],
+        eth.destination[0], eth.destination[1], eth.destination[2],
+        eth.destination[3], eth.destination[4], eth.destination[5],
+    });
+    std.debug.print("  IPv4: {}.{}.{}.{} -> {}.{}.{}.{}\n", .{
+        ipv4.source[0],      ipv4.source[1],      ipv4.source[2],      ipv4.source[3],
+        ipv4.destination[0], ipv4.destination[1], ipv4.destination[2], ipv4.destination[3],
+    });
+    std.debug.print("  UDP: {} -> {}\n", .{ udp.source_port, udp.destination_port });
+}

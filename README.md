@@ -658,3 +658,55 @@ var buf: [16]u8 = undefined;
 const len = try file.readAll(&buf);
 const ifindex = try std.fmt.parseInt(u32, buf[0..len-1], 10);
 ```
+
+## Testing
+
+### Run All Tests (One Command)
+
+```bash
+sudo make test-all
+```
+
+This runs:
+- ✓ Unit tests (basic functionality)
+- ✓ Packet tests (protocol parsing)
+- ✓ Protocol tests (header serialization)
+- ✓ E2E tests (AF_XDP infrastructure)
+- ✓ **Traffic tests** (real packet injection & reception) ⭐
+
+### Individual Test Suites
+
+```bash
+# No root required
+make test-unit           # Unit tests
+make test-packet         # Packet parsing
+make test-protocol       # Protocol headers
+
+# Requires root
+sudo make test-e2e       # Infrastructure setup
+sudo make test-traffic   # Real traffic flow
+```
+
+### Example Test Output
+
+```
+$ sudo make test-traffic
+✓ Created veth pair: veth_test_rx <-> veth_test_tx
+✓ Created AF_XDP service on veth_test_rx
+Injecting 10 test packets into veth_test_tx...
+✓ Injected 10 packets
+
+=== Results ===
+Packets counted by processor: 8
+Service stats:
+  RX: 8 packets, 496 bytes  ← REAL TRAFFIC!
+  TX: 0 packets, 0 bytes
+✓ SUCCESS: Received 8 packets via AF_XDP!
+```
+
+### Documentation
+
+- **[ARCHITECTUR.md](ARCHITECTURG.md)** - AF_XDP lib Architecture
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Testing guide
+- **[AFXDP_TRAFFIC_TESTING.md](AFXDP_TRAFFIC_TESTING.md)** - Traffic testing
+
