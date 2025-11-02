@@ -60,8 +60,6 @@ pub fn main() !void {
 }
 ```
 
-**See [examples/](examples/) for more examples and [API_DESIGN.md](API_DESIGN.md) for the complete API documentation.**
-
 ---
 
 ## Project Structure
@@ -69,23 +67,26 @@ pub fn main() !void {
 ```
 zafxdp/
 ├── src/
-│   ├── lib/              # Library code
-│   │   ├── root.zig      # Main API entry point (re-exports all APIs)
-│   │   ├── xsk.zig       # AF_XDP socket implementation (low-level)
-│   │   ├── loader.zig    # eBPF program loader (low-level)
-│   │   ├── protocol.zig  # Protocol parsers (Ethernet, IPv4, TCP, UDP, etc.)
-│   │   ├── packet.zig    # Zero-copy packet abstraction
-│   │   ├── processor.zig # Packet processor interface
-│   │   ├── pipeline.zig  # Pipeline for chaining processors
-│   │   ├── stats.zig     # Statistics collection
-│   │   └── service.zig   # High-level service management
-│   └── cmd/              # CLI application
-│       └── main.zig      # Command-line tool
-├── examples/             # Example programs
-│   ├── simple_forwarder.zig
-│   └── README.md
-├── API_DESIGN.md         # Detailed API documentation
-└── build.zig             # Build configuration
+│   ├── lib/                      # Library code
+│   │   ├── root.zig              # Main API entry point (re-exports all APIs)
+│   │   ├── xsk.zig               # AF_XDP socket implementation (low-level)
+│   │   ├── loader.zig            # eBPF program loader (low-level)
+│   │   ├── protocol.zig          # Protocol parsers (Ethernet, IPv4, TCP, UDP, ICMP, ARP)
+│   │   ├── packet.zig            # Zero-copy packet abstraction with lazy parsing
+│   │   ├── processor.zig         # Packet processor interface
+│   │   ├── pipeline.zig          # Pipeline for chaining processors
+│   │   ├── stats.zig             # Statistics collection
+│   │   ├── service.zig           # High-level service management
+│   │   ├── e2e_test.zig          # End-to-end infrastructure tests
+│   │   └── traffic_test.zig      # Real traffic tests (packet injection & reception)
+│   └── cmd/                      # CLI application
+│       └── main.zig              # Command-line tool
+├── ARCHITECTURE.md               # System architecture documentation
+├── E2E_TESTS.md                  # E2E testing documentation
+├── TESTING_GUIDE.md              # Comprehensive testing guide
+├── AFXDP_TRAFFIC_TESTING.md      # Traffic testing deep dive
+├── Makefile                      # Simplified build commands
+└── build.zig                     # Build configuration
 ```
 
 Import the library using a single import:
@@ -188,7 +189,6 @@ std.debug.print("RX: {} pkts, TX: {} pkts\n", .{
 });
 ```
 
-For complete documentation, see **[API_DESIGN.md](API_DESIGN.md)** and **[examples/](examples/)**.
 
 ---
 
@@ -706,7 +706,8 @@ Service stats:
 
 ### Documentation
 
-- **[ARCHITECTUR.md](ARCHITECTURG.md)** - AF_XDP lib Architecture
-- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Testing guide
-- **[AFXDP_TRAFFIC_TESTING.md](AFXDP_TRAFFIC_TESTING.md)** - Traffic testing
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - AF_XDP library architecture
+- **[E2E_TESTS.md](E2E_TESTS.md)** - E2E testing documentation
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Comprehensive testing guide
+- **[AFXDP_TRAFFIC_TESTING.md](AFXDP_TRAFFIC_TESTING.md)** - Traffic testing deep dive
 
