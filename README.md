@@ -1,5 +1,7 @@
 # zafxdp - AF_XDP for Zig
 
+[![Tests](https://github.com/ncldmg/zafxdp/actions/workflows/test.yml/badge.svg)](https://github.com/ncldmg/zafxdp/actions/workflows/test.yml)
+
 A pure Zig implementation of AF_XDP (Address Family XDP) sockets with eBPF program loading, featuring both **low-level** and **high-level** APIs for building high-performance networking applications.
 
 ## Key Features
