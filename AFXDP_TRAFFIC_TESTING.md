@@ -48,7 +48,7 @@ The tests in `src/lib/traffic_test.zig` actually:
 1. Creates veth pair: `veth_test_rx` ↔ `veth_test_tx`
 2. Sets up AF_XDP socket on `veth_test_rx`
 3. Injects 10 packets into `veth_test_tx`
-4. Packets appear on `veth_test_rx` (veth pair is like a cable)
+4. Packets appear on `veth_test_rx`
 5. AF_XDP receives packets
 6. Counter processor counts them
 7. Verifies packet count > 0
