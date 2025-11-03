@@ -285,15 +285,15 @@ pub fn loadAfXdpProgram(allocator: mem.Allocator, object_file: []const u8) Loade
 
 pub fn printLoaderStatus(loader: *EbpfLoader, writer: anytype) !void {
     try writer.print("eBPF Loader Status:\n");
-    try writer.print("  Programs loaded: {}\n", .{loader.getProgramCount()});
-    try writer.print("  Maps created: {}\n", .{loader.getMapCount()});
+    try writer.print("Programs loaded: {}\n", .{loader.getProgramCount()});
+    try writer.print("Maps created: {}\n", .{loader.getMapCount()});
 
     for (loader.programs.items, 0..) |prog, i| {
-        try writer.print("  Program {}: {} (fd={})\n", .{ i, prog.name, prog.fd });
+        try writer.print("Program {}: {} (fd={})\n", .{ i, prog.name, prog.fd });
     }
 
     for (loader.maps.items, 0..) |map, i| {
-        try writer.print("  Map {}: {} (fd={}, type={}, entries={})\n", .{ i, map.name, map.fd, @intFromEnum(map.type), map.max_entries });
+        try writer.print("Map {}: {} (fd={}, type={}, entries={})\n", .{ i, map.name, map.fd, @intFromEnum(map.type), map.max_entries });
     }
 }
 
@@ -403,7 +403,6 @@ pub const Program = struct {
 //
 //    return XDP_PASS;
 // }
-
 // TODO: use zbpf lib
 fn buildXdpProgram(allocator: mem.Allocator, qidconf_fd: i32, xsks_fd: i32) LoaderError![]BPF.Insn {
     var insns: ArrayList(BPF.Insn) = .{};

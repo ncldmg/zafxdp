@@ -48,7 +48,7 @@ pub const XDPSocket = struct {
 
     // Private helper methods for initialization
 
-    /// Create and validate XDP socket file descriptor
+    // Create and validate XDP socket file descriptor
     fn createSocketFd() !i32 {
         const fd = os.linux.socket(os.linux.AF.XDP, os.linux.SOCK.RAW, 0);
 
@@ -65,7 +65,7 @@ pub const XDPSocket = struct {
         return @intCast(fd);
     }
 
-    /// Allocate UMEM (user memory) for packet buffers
+    // Allocate UMEM (user memory) for packet buffers
     fn allocateUmem(options: SocketOptions) ![]u8 {
         return try posix.mmap(
             null,
@@ -77,7 +77,7 @@ pub const XDPSocket = struct {
         );
     }
 
-    /// Register UMEM with the XDP socket
+    // Register UMEM with the XDP socket
     fn registerUmem(fd: i32, umem: []u8, options: SocketOptions) !void {
         const xdpUmemReg = os.linux.xdp_umem_reg{
             .addr = @intFromPtr(&umem[0]),
@@ -92,7 +92,7 @@ pub const XDPSocket = struct {
         try posix.setsockopt(fd, posix.SOL.XDP, os.linux.XDP.UMEM_COMPLETION_RING, mem.toBytes(options.CompletionRingNumDescs)[0..]);
     }
 
-    /// Configure RX and TX rings
+    // Configure RX and TX rings
     fn configureRings(fd: i32, options: SocketOptions) !void {
         var hasRxRing = false;
         var hasTxRing = false;
@@ -112,7 +112,7 @@ pub const XDPSocket = struct {
         }
     }
 
-    /// Get memory-mapped ring offsets from socket
+    // Get memory-mapped ring offsets from socket
     fn getMmapOffsets(fd: usize) !os.linux.xdp_mmap_offsets {
         var offsets: os.linux.xdp_mmap_offsets = undefined;
         var optlen: os.linux.socket_t = @sizeOf(os.linux.xdp_mmap_offsets);
@@ -136,7 +136,7 @@ pub const XDPSocket = struct {
         return offsets;
     }
 
-    /// Map ring register helper
+    // Map ring register helper
     fn mapRingRegister(
         fd: i32,
         length: usize,
@@ -173,7 +173,7 @@ pub const XDPSocket = struct {
         };
     }
 
-    /// Map UMEM ring (fill or completion)
+    // Map UMEM ring (fill or completion)
     fn mapUmemRing(
         ring: *UmemRing,
         fd: i32,
@@ -195,7 +195,7 @@ pub const XDPSocket = struct {
         ring.Descs = @as([*]u64, @ptrFromInt(@intFromPtr(ringInfo.ring.ptr) + @as(usize, @intCast(desc_offset))))[0..num_descs];
     }
 
-    /// Map RX/TX ring
+    // Map RX/TX ring
     fn mapRxTxRing(
         ring: *RxTxRing,
         fd: i32,
@@ -217,7 +217,7 @@ pub const XDPSocket = struct {
         ring.Descs = @as([*]XDPDesc, @ptrFromInt(@intFromPtr(ringInfo.ring.ptr) + @as(usize, @intCast(desc_offset))))[0..num_descs];
     }
 
-    /// Bind XDP socket to network interface and queue
+    // Bind XDP socket to network interface and queue
     fn bindSocket(fd: i32, ifIndex: u32, queueId: u32) !void {
         const xdpSockAddr = os.linux.sockaddr.xdp{
             .ifindex = ifIndex,
@@ -235,9 +235,7 @@ pub const XDPSocket = struct {
         }
     }
 
-    // Public methods
-
-    /// Create a new XDP socket
+    // Create a new XDP socket
     pub fn init(allocator: std.mem.Allocator, ifIndex: u32, queueId: u32, options: SocketOptions) !*Self {
         var xsk = try allocator.create(Self);
         errdefer allocator.destroy(xsk);
@@ -412,7 +410,7 @@ pub const XDPSocket = struct {
         const queued = self.txRing(descs[0..sent], sent);
 
         if (queued > 0) {
-            const rc = os.linux.sendto(self.Fd, null, 0, os.linux.MSG.DONTWAIT, null, 0);
+            const rc = os.linux.sendto(self.Fd, undefined, 0, os.linux.MSG.DONTWAIT, null, 0);
             if (rc < 0) {
                 const err = posix.errno(rc);
                 if (err != .AGAIN and err != .WOULDBLOCK) {
@@ -446,7 +444,7 @@ pub const XDPSocket = struct {
 
     // Kick the socket to wake up the kernel
     pub fn kick(self: *Self) !void {
-        const rc = os.linux.sendto(self.Fd, null, 0, os.linux.MSG.DONTWAIT, null, 0);
+        const rc = os.linux.sendto(self.Fd, undefined, 0, os.linux.MSG.DONTWAIT, null, 0);
         if (rc < 0) {
             const err = posix.errno(rc);
             if (err != .AGAIN and err != .WOULDBLOCK) {
