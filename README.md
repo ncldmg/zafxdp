@@ -612,14 +612,16 @@ The CLI demonstrates the full library functionality including:
 ## Testing
 
 ```bash
-make test          # unit tests
-make test-e2e      # e2e tests
+make test-unit          # unit tests
+sudo make test-e2e      # e2e tests (requires root)
+sudo make test-all      # run all tests (requires root)
 ```
 
 **Note**: E2E tests require root privileges because they create BPF programs and maps. Unit tests that require network access will skip gracefully if permissions are insufficient.
 
 For more details, see:
 - **[E2E_TESTS.md](E2E_TESTS.md)** - L2 forwarder implementation
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Comprehensive testing guide
 
 
 ## Troubleshooting

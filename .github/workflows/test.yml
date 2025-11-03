@@ -23,4 +23,4 @@ jobs:
         run: make build
 
       - name: Run all tests
-        run: sudo make test-all
+        run: sudo -E env "PATH=$PATH" make test-all
