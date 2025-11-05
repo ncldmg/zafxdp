@@ -20,6 +20,12 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    // CLI library dependency
+    const cli_dep = b.dependency("cli", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // CLI executable (src/cmd/main.zig)
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/cmd/main.zig"),
@@ -28,6 +34,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe_mod.addImport("zafxdp_lib", lib_mod);
+    exe_mod.addImport("cli", cli_dep.module("cli"));
 
     const exe = b.addExecutable(.{
         .name = "zafxdp",
@@ -113,6 +120,46 @@ pub fn build(b: *std.Build) void {
 
     const run_protocol_tests = b.addRunArtifact(protocol_tests);
 
+    // Command tests (src/cmd/commands/*.zig)
+    const common_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/cmd/commands/common.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const common_tests = b.addTest(.{
+        .root_module = common_test_mod,
+    });
+
+    const run_common_tests = b.addRunArtifact(common_tests);
+
+    const list_interfaces_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/cmd/commands/list_interfaces.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const list_interfaces_tests = b.addTest(.{
+        .root_module = list_interfaces_test_mod,
+    });
+
+    const run_list_interfaces_tests = b.addRunArtifact(list_interfaces_tests);
+
+    const receive_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/cmd/commands/receive.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    receive_test_mod.addImport("zafxdp_lib", lib_mod);
+    receive_test_mod.addImport("common", common_test_mod);
+
+    const receive_tests = b.addTest(.{
+        .root_module = receive_test_mod,
+    });
+
+    const run_receive_tests = b.addRunArtifact(receive_tests);
+
     // Individual test steps
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
@@ -129,11 +176,19 @@ pub fn build(b: *std.Build) void {
     const protocol_step = b.step("test-protocol", "Run protocol tests");
     protocol_step.dependOn(&run_protocol_tests.step);
 
+    const cmd_step = b.step("test-cmd", "Run command tests");
+    cmd_step.dependOn(&run_common_tests.step);
+    cmd_step.dependOn(&run_list_interfaces_tests.step);
+    cmd_step.dependOn(&run_receive_tests.step);
+
     // Unified test command - runs all tests
-    const test_all_step = b.step("test-all", "Run all tests (unit + packet + protocol + e2e + traffic, requires root)");
+    const test_all_step = b.step("test-all", "Run all tests (unit + packet + protocol + cmd + e2e + traffic, requires root)");
     test_all_step.dependOn(&run_lib_unit_tests.step);
     test_all_step.dependOn(&run_packet_tests.step);
     test_all_step.dependOn(&run_protocol_tests.step);
+    test_all_step.dependOn(&run_common_tests.step);
+    test_all_step.dependOn(&run_list_interfaces_tests.step);
+    test_all_step.dependOn(&run_receive_tests.step);
     test_all_step.dependOn(&run_e2e_tests.step);
     test_all_step.dependOn(&run_traffic_tests.step);
 }

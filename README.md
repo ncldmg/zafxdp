@@ -685,6 +685,7 @@ This runs:
 make test-unit           # Unit tests
 make test-packet         # Packet parsing
 make test-protocol       # Protocol headers
+make test-cmd            # Command tests
 
 # Requires root
 sudo make test-e2e       # Infrastructure setup
