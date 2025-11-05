@@ -1,16 +1,16 @@
 # AF_XDP Traffic Testing Guide
 
-This guide explains how to test AF_XDP with **real network traffic** instead of just testing infrastructure setup.
+This guide explains traffic testing with AF_XDP.
 
 ## Overview
 
-The tests in `src/lib/traffic_test.zig` actually:
-- ✓ Create virtual network interfaces (veth pairs)
-- ✓ Inject real Ethernet frames into the network stack
-- ✓ Receive packets via AF_XDP sockets
-- ✓ Process packets through the pipeline
-- ✓ Forward packets to other interfaces
-- ✓ Verify packet counts and stats
+The tests in `src/lib/traffic_test.zig` do the following:
+- Create virtual network interfaces (veth pairs)
+- Inject Ethernet frames into the network stack
+- Receive packets via AF_XDP sockets
+- Process packets through the pipeline
+- Forward packets to other interfaces
+- Verify packet counts and stats
 
 ---
 
@@ -84,6 +84,64 @@ const stats = service.getStats();
 5. Forwarder swaps them (A→B and B→A)
 6. Verifies bidirectional traffic works
 
+**Architecture:**
+
+```
+                    Bidirectional L2 Forwarding Test
+
+    ┌────────────────────────────────────────────────────────────┐
+    │                      Test Process                          │
+    │                                                            │
+    │  ┌──────────────┐                    ┌──────────────┐     │
+    │  │  Injector A  │                    │  Injector B  │     │
+    │  │ (AF_PACKET)  │                    │ (AF_PACKET)  │     │
+    │  └──────┬───────┘                    └───────┬──────┘     │
+    │         │                                    │            │
+    │         │ Send packets                       │ Send packets
+    │         │ via raw socket                     │ via raw socket
+    │         ▼                                    ▼            │
+    └─────────┼────────────────────────────────────┼────────────┘
+              │                                    │
+              │                                    │
+    ┌─────────▼────────┐           ┌──────────────▼─────────┐
+    │   veth_fwd_a     │◄─────────►│    veth_fwd_b          │
+    │                  │  Kernel   │                        │
+    │ AF_XDP Socket #1 │  veth     │  AF_XDP Socket #2      │
+    │                  │  pair     │                        │
+    └─────────┬────────┘           └──────────┬─────────────┘
+              │                               │
+              │ RX: Packets from B            │ RX: Packets from A
+              │                               │
+              ▼                               ▼
+    ┌─────────────────────────────────────────────────────────┐
+    │              AF_XDP Service (Service.zig)               │
+    │                                                         │
+    │  ┌──────────────────────────────────────────────────┐  │
+    │  │           L2 Forwarder Pipeline                  │  │
+    │  │                                                  │  │
+    │  │  RX from A ──► Process ──► TX to B              │  │
+    │  │                                                  │  │
+    │  │  RX from B ──► Process ──► TX to A              │  │
+    │  │                                                  │  │
+    │  │  (Swaps source/destination interfaces)          │  │
+    │  └──────────────────────────────────────────────────┘  │
+    └─────────────────────────────────────────────────────────┘
+
+Flow Example:
+  1. Injector A sends packet → veth_fwd_a
+  2. AF_XDP RX on veth_fwd_a receives it
+  3. L2 Forwarder processes: forward to veth_fwd_b
+  4. AF_XDP TX on veth_fwd_b transmits it
+  5. Packet appears on veth_fwd_b (visible to Injector B)
+
+  (Same flow happens in reverse: B → A)
+
+Verification:
+  ✓ Service stats show RX packets on both interfaces
+  ✓ Service stats show TX packets on both interfaces
+  ✓ Confirms bidirectional forwarding works
+```
+
 ---
 
 ## Running the Tests
@@ -137,104 +195,6 @@ Service stats:
 - Timing issues (packets sent before AF_XDP socket is ready)
 - XDP mode (SKB mode on veth has different behavior than native mode)
 - Kernel packet filtering
-
----
-
-## Key Components Explained
-
-### 1. Creating veth Pairs
-
-**Why veth instead of dummy interfaces?**
-- Dummy interfaces don't actually pass traffic
-- veth pairs are connected: packet sent to one end appears on the other
-- Perfect for testing without physical NICs
-
-```zig
-fn createVethPair(name_a: []const u8, name_b: []const u8) !void {
-    // Runs: ip link add veth_a type veth peer name veth_b
-    const argv = [_][]const u8{
-        "ip", "link", "add", name_a, "type", "veth", "peer", "name", name_b,
-    };
-    var child = std.process.Child.init(&argv, std.heap.page_allocator);
-    const result = try child.spawnAndWait();
-    if (result != .Exited or result.Exited != 0) {
-        return error.FailedToCreateVethPair;
-    }
-}
-```
-
-### 2. Packet Injection
-
-**Uses AF_PACKET raw sockets** to inject Ethernet frames:
-
-```zig
-fn injectPacket(ifname: []const u8, packet_data: []const u8) !void {
-    // Create raw socket
-    const sock_fd = try std.posix.socket(
-        std.posix.AF.PACKET,
-        std.posix.SOCK.RAW,
-        @byteSwap(@as(u16, 0x0003)), // ETH_P_ALL
-    );
-    defer std.posix.close(sock_fd);
-
-    // Bind to interface
-    var addr = std.mem.zeroes(std.posix.sockaddr.ll);
-    addr.sll_family = std.posix.AF.PACKET;
-    addr.sll_ifindex = @intCast(ifindex);
-
-    // Send raw Ethernet frame
-    _ = try std.posix.sendto(sock_fd, packet_data, 0, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
-}
-```
-
-**Why this works:**
-- AF_PACKET socket operates at Layer 2 (Ethernet)
-- Can send raw frames directly to network interface
-- Bypasses normal network stack (no routing, no TCP/IP processing)
-- Frame appears on wire (or veth peer) exactly as sent
-
-### 3. Test Packet Structure
-
-```zig
-fn buildTestPacket(buffer: []u8, src_mac: [6]u8, dst_mac: [6]u8, payload_byte: u8) []u8 {
-    // Ethernet: 14 bytes
-    @memcpy(buffer[0..6], &dst_mac);
-    @memcpy(buffer[6..12], &src_mac);
-    std.mem.writeInt(u16, buffer[12..14], 0x0800, .big); // EtherType: IPv4
-
-    // IPv4: 20 bytes
-    buffer[14] = 0x45; // version=4, ihl=5
-    // ... (see code for full header)
-
-    // UDP: 8 bytes
-    std.mem.writeInt(u16, buffer[34..36], 12345, .big); // src port
-    std.mem.writeInt(u16, buffer[36..38], 53, .big);    // dst port
-
-    // Payload: 20 bytes
-    @memset(buffer[42..62], payload_byte);
-
-    return buffer[0..62]; // Total: 62 bytes
-}
-```
-
-### 4. Service Thread
-
-**Why run service in separate thread?**
-
-```zig
-var service_thread = try std.Thread.spawn(.{}, serviceRunThread, .{&service});
-
-// Main thread injects packets while service thread receives them
-injectPacket(...);
-
-// Later: stop and wait
-service.stop();
-service_thread.join();
-```
-
-Without a separate thread, you'd have a chicken-and-egg problem:
-- Can't inject packets until service is running
-- Can't run service (blocking poll) while injecting packets
 
 ---
 
